@@ -1,8 +1,9 @@
 {
-  "name": "reembolso-viagens-netlify",
+  "name": "painel-reembolsos-ajustado",
   "private": true,
-  "type": "module",
+  "version": "1.0.0",
+  "description": "Painel de reembolsos com persistência compartilhada via Netlify Functions + Netlify Blobs",
   "dependencies": {
-    "@netlify/blobs": "^8.1.0"
+    "@netlify/blobs": "^10.7.4"
   }
 }
