@@ -1,16 +1,17 @@
-import { getStore } from '@netlify/blobs';
+function jsonResponse(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Allow-Methods": "POST, OPTIONS"
+    }
+  });
+}import { getStore } from '@netlify/blobs';
 
 const store = getStore('reembolso-viagens-v1');
 
-function jsonResponse(payload, status = 200) {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-store'
-    }
-  });
-}
 
 async function listCollection(prefix) {
   const { blobs } = await store.list({ prefix: `${prefix}/` });

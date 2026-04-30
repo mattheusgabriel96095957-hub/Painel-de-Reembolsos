@@ -438,22 +438,11 @@ let refeicoesExcluidas = {};
 let aprovacaoAtualId = null;
 
 const STORAGE_KEYS = {
-    cache: 'reembolso_viagens_cache_v3'
+    cache: 'reembolso_viagens_cache_v2'
 };
 const API_ENDPOINT = '/.netlify/functions/reembolso-api';
-const REQUEST_TIMEOUT_MS = 30000;
-const AUTO_SYNC_INTERVAL_MS = 5000;
-const MAX_ATTACHMENT_SIZE_BYTES = 2 * 1024 * 1024;
-const MAX_ATTACHMENTS_TOTAL_BYTES = 4.5 * 1024 * 1024;
 let syncInterval = null;
 let syncInFlight = false;
-
-function generateId(prefix = 'id_') {
-    const suffix = (window.crypto && typeof window.crypto.randomUUID === 'function')
-        ? window.crypto.randomUUID()
-        : `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-    return `${prefix}${suffix}`;
-}
 
 function ordenarColecoes() {
     colaboradores = [...colaboradores].sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
@@ -465,45 +454,13 @@ function ordenarColecoes() {
     });
 }
 
-function sanitizeAttachmentForCache(anexo) {
-    if (!anexo || typeof anexo !== 'object') return anexo;
-    const { dataUrl, ...rest } = anexo;
-    return rest;
-}
-
-function sanitizeLancamentoForCache(lancamento) {
-    if (!lancamento || typeof lancamento !== 'object') return lancamento;
-    return {
-        ...lancamento,
-        anexos: Array.isArray(lancamento.anexos) ? lancamento.anexos.map(sanitizeAttachmentForCache) : [],
-        kmDetalhes: Array.isArray(lancamento.kmDetalhes) ? lancamento.kmDetalhes.map(item => ({
-            ...item,
-            anexos: Array.isArray(item?.anexos) ? item.anexos.map(sanitizeAttachmentForCache) : []
-        })) : [],
-        refeicoesDetalhes: Array.isArray(lancamento.refeicoesDetalhes) ? lancamento.refeicoesDetalhes.map(item => ({
-            ...item,
-            anexos: Array.isArray(item?.anexos) ? item.anexos.map(sanitizeAttachmentForCache) : []
-        })) : [],
-        outrosDetalhes: Array.isArray(lancamento.outrosDetalhes) ? lancamento.outrosDetalhes.map(item => ({
-            ...item,
-            anexos: Array.isArray(item?.anexos) ? item.anexos.map(sanitizeAttachmentForCache) : []
-        })) : []
-    };
-}
-
-function obterSnapshotDados(options = {}) {
-    const { forCache = false } = options;
-    return {
-        colaboradores,
-        obras,
-        lancamentos: forCache ? lancamentos.map(sanitizeLancamentoForCache) : lancamentos,
-        parametros
-    };
+function obterSnapshotDados() {
+    return { colaboradores, obras, lancamentos, parametros };
 }
 
 function salvarCacheLocal() {
     try {
-        localStorage.setItem(STORAGE_KEYS.cache, JSON.stringify(obterSnapshotDados({ forCache: true })));
+        localStorage.setItem(STORAGE_KEYS.cache, JSON.stringify(obterSnapshotDados()));
     } catch (error) {
         console.warn('Não foi possível atualizar o cache local.', error);
     }
@@ -526,30 +483,17 @@ function carregarCacheLocal() {
 }
 
 async function apiRequest(action, payload = {}) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const response = await fetch(API_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, ...payload })
+    });
 
-    try {
-        const response = await fetch(API_ENDPOINT, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action, ...payload }),
-            signal: controller.signal
-        });
-
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok || data.ok === false) {
-            throw new Error(data.error || 'Falha de comunicação com a persistência remota.');
-        }
-        return data;
-    } catch (error) {
-        if (error?.name === 'AbortError') {
-            throw new Error('Tempo de resposta excedido ao acessar a persistência compartilhada.');
-        }
-        throw error;
-    } finally {
-        clearTimeout(timeout);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+        throw new Error(data.error || 'Falha de comunicação com a persistência remota.');
     }
+    return data;
 }
 
 function aplicarDadosRemotos(data = {}) {
@@ -605,7 +549,7 @@ async function sincronizarDadosSilenciosamente() {
 
 function iniciarSincronizacaoAutomatica() {
     if (syncInterval) clearInterval(syncInterval);
-    syncInterval = setInterval(sincronizarDadosSilenciosamente, AUTO_SYNC_INTERVAL_MS);
+    syncInterval = setInterval(sincronizarDadosSilenciosamente, 20000);
 }
 
 function atualizarDataTopo() {
@@ -912,12 +856,9 @@ function fileToDataURL(file) {
 async function buildAttachmentRecords(files, meta = {}) {
     const list = [];
     for (const file of Array.from(files || [])) {
-        if ((file.size || 0) > MAX_ATTACHMENT_SIZE_BYTES) {
-            throw new Error(`O arquivo ${file.name} excede o limite de 2 MB por anexo.`);
-        }
         const dataUrl = await fileToDataURL(file);
         list.push({
-            id: generateId('anx_'),
+            id: `anx_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
             nome: file.name,
             tipo: file.type || '',
             tamanho: file.size || 0,
@@ -1020,13 +961,8 @@ async function criarLancamentoDoFormulario() {
         });
     }
 
-    const totalAnexosBytes = anexos.reduce((sum, item) => sum + (item?.tamanho || 0), 0);
-    if (totalAnexosBytes > MAX_ATTACHMENTS_TOTAL_BYTES) {
-        throw new Error('O volume total de anexos excede o limite recomendado de 4,5 MB por lançamento.');
-    }
-
     return {
-        id: generateId('l_'),
+        id: `l${Date.now()}`,
         colabId: col.id,
         colab: col.nome,
         matricula: col.matricula,
@@ -1440,7 +1376,7 @@ async function salvarColaborador() {
     if (!n) return;
 
     const novoColaborador = {
-        id: generateId('c_'),
+        id: 'c' + Date.now(),
         nome: n,
         cargo: c,
         matricula: m,
@@ -1496,7 +1432,7 @@ async function salvarObra() {
     if (!n) return;
 
     const novaObra = {
-        id: generateId('o_'),
+        id: 'o' + Date.now(),
         nome: n,
         responsavel: r,
         status: 'ativa'
